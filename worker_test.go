@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"martin/spider_man/factory"
 	"martin/spider_man/util"
-	"martin/spider_man/worker"
 	"os"
 	"path"
 	"regexp"
@@ -13,7 +13,7 @@ import (
 )
 
 func TestPick(t *testing.T) {
-	w := new(worker.Worker)
+	w := new(factory.Worker)
 	var text []byte
 	file, err := os.Open("data/tmp/example3.html")
 	if err != nil {
@@ -23,7 +23,7 @@ func TestPick(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Log(w.Pick("www.baidu.com","", "", text))
+	t.Log(w.Pick("www.baidu.com", "", "", text))
 	t.Log("\n")
 }
 
@@ -32,24 +32,24 @@ func TestSaveToFile(t *testing.T) {
 }
 
 func TestDigAndSave(t *testing.T) {
-	w := worker.Worker{Id:"1"}
-	p := worker.Pleasure{
-		Resource: worker.Resource{
-			Refer:"https://www.mzitu.com/201884/4",
-			Uri:"https://i5.meizitu.net/2016/02/29z13.jpg"}}
+	w := factory.Worker{Id: "1"}
+	p := factory.Pleasure{
+		Resource: factory.Resource{
+			Refer: "https://www.mzitu.com/201884/4",
+			Uri:   "https://i5.meizitu.net/2016/02/29z13.jpg"}}
 	entity, err := w.Dig(p.Resource)
 	if err != nil {
-		t.Log("旷工" + w.Id + "来报，搬运出错了，", err)
+		t.Log("旷工"+w.Id+"来报，搬运出错了，", err)
 	}
 	err = util.SaveToFile("data/2.jpg", entity)
 	if err != nil {
-		log.Println("旷工" + w.Id + "来报，储存出错了，", err)
+		log.Println("旷工"+w.Id+"来报，储存出错了，", err)
 	}
 	t.Log("已保存！")
 }
 
-func TestPreSave(t *testing.T){
-	w := worker.Worker{Id:"1"}
+func TestPreSave(t *testing.T) {
+	w := factory.Worker{Id: "1"}
 	var text []byte
 	file, err := os.Open("data/tmp/example3.html")
 	if err != nil {

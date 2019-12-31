@@ -41,7 +41,7 @@ func SaveToFile(pathStr string, content []byte) (err error) {
 		return fmt.Errorf("创建文件夹出错:%s", err.Error())
 	}
 	var file *os.File
-	file, err = os.OpenFile(pathStr, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0777)
+	file, err = os.OpenFile(pathStr, os.O_RDWR|os.O_CREATE, 0777)
 	if err != nil {
 		return err
 	}
