@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+const LIST_URI = "https://www.mzitu.com/all"
+const HOME_URI = "https://www.mzitu.com"
+
 type Dispatcher struct {
 	Ctx       global.Context
 	WorkerNum int
@@ -16,38 +19,9 @@ type Dispatcher struct {
 var cs chan Seeder
 var ps chan []Pleasure
 
-func (d *Dispatcher) SetDone(uri string) {
-	stmt, err := d.Ctx.Db.Prepare("INSERT INTO done_url(url) values (?)")
-	if err != nil {
-		log.Fatalln(err)
-	}
-	defer stmt.Close()
-	_, err = stmt.Exec(uri)
-	if err != nil {
-		log.Fatalln("写入报错", err)
-	}
-}
-
-func (d *Dispatcher) GetDone(uri string) bool {
-	if uri == "https://www.mzitu.com" || uri == "https://www.mzitu.com/all" {
-		return false
-	}
-	stmt, err := d.Ctx.Db.Prepare("SELECT * FROM done_url where url = ? limit 1")
-	if err != nil {
-		log.Fatalln(err)
-	}
-	defer stmt.Close()
-
-	rows, err := stmt.Query(uri)
-	defer rows.Close()
-
-	if err != nil {
-		log.Fatalln(err)
-	}
-	return rows.Next()
-}
-
 func (d *Dispatcher) Start() {
+	//d.Ensure()
+	//log.Fatalln("结束了")
 	cs = make(chan Seeder, 10)
 	ps = make(chan []Pleasure, 10)
 
@@ -58,11 +32,15 @@ func (d *Dispatcher) Start() {
 		w.SeederChan = cs
 		w.Dispatcher = d
 		w.Id = strconv.Itoa(i + 1)
-		w.Run()
+		go w.Run()
 		i++
 	}
 	log.Println(strconv.Itoa(d.WorkerNum) + "个旷工已经开始工作")
-	cs <- Seeder{Resource{Uri: "https://www.mzitu.com/all"}}
+	seeders := d.GetAllUndone()
+	for _, s := range seeders {
+		cs <- s
+	}
+	cs <- Seeder{Resource{Uri: LIST_URI}}
 	d.panel()
 
 	shutdownSign := time.Tick(1 * time.Second)

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -19,6 +20,8 @@ type Resource struct {
 	TryTimes int
 	Error    error
 	Refer    string
+	Id       string
+	Num      int
 }
 
 type Seeder struct {
@@ -27,12 +30,13 @@ type Seeder struct {
 
 type Pleasure struct {
 	Resource
-	Id     string
-	Num    string
+
 	Entity []byte
 	Name   string
 	Ext    string
 }
+
+const STORE_ROOT = "data1"
 
 type Worker struct {
 	Id           string
@@ -42,45 +46,30 @@ type Worker struct {
 }
 
 func (w *Worker) Run() {
-	go func() {
-		w.Work()
-	}()
+	w.Work()
 }
 
 func (w *Worker) Work() {
 	for {
 		select {
 		case s := <-w.SeederChan:
-			if w.Dispatcher.GetDone(s.Uri) {
-				continue
-			}
-			seederReg := regexp.MustCompile(`https://www\.mzitu\.com/(\d{1,8})(/(\d{1,3}))?`)
-			page := seederReg.FindStringSubmatch(s.Uri)
-			//
-			//if page != nil && len(page[1]) > 0 {
-			//	_id, _ := strconv.Atoi(page[1])
-			//	if _id < 220000 {
-			//		w.Dispatcher.SetDone(s.Uri)
-			//		continue
-			//	}
-			//}
-
 			text, err := w.Dig(s.Resource)
 			if err != nil {
 				log.Fatalln("旷工"+w.Id+"来报，挖取出错了", err)
 				go func() { w.SeederChan <- s }()
 			}
-			if page != nil && len(page[2]) == 0 {
-				w.PreSave(page[1], text)
+			if len(text) == 0 {
+				go func() { w.SeederChan <- s }()
+				continue
 			}
-			if page == nil {
-				page = []string{"", "", "0"}
+			if len(s.Id) > 0 && s.Num == 1 {
+				w.PreSave(s.Id, text)
 			}
-			if page[2] == "" {
-				page[2] = "1"
+
+			seeders, pleasures := w.Pick(s.Uri, s.Id, s.Num, text)
+			if s.Uri != LIST_URI && len(seeders) == 0 && len(pleasures) == 0 {
+				log.Fatalln("有个哑炮，检查一下", s.Uri, s.Num, s.Id)
 			}
-			seeders, pleasures := w.Pick(s.Uri, page[1], page[2], text)
-			//log.Fatalln(seeders, pleasures)
 			if len(seeders) > 0 {
 				go func() {
 					for _, seeder := range seeders {
@@ -91,13 +80,9 @@ func (w *Worker) Work() {
 			if len(pleasures) > 0 {
 				go func() { w.PleasureChan <- pleasures }()
 			}
-			w.Dispatcher.SetDone(s.Uri)
 		case ps := <-w.PleasureChan:
 			errPleasure := []Pleasure{}
 			for _, p := range ps {
-				if w.Dispatcher.GetDone(p.Uri) {
-					continue
-				}
 				entity, err := w.Dig(p.Resource)
 				if err != nil {
 					log.Println("旷工"+w.Id+"来报，搬运出错了，", err)
@@ -109,12 +94,12 @@ func (w *Worker) Work() {
 				}
 				log.Println("要存图片了", p.Id, p.Name, p.Ext)
 				p.Name = strings.Trim(p.Name, "/")
-				err = util.SaveToFile(path.Join("data", p.Id, strings.Replace(p.Name, "/", "_", -1)+"."+p.Ext), entity)
+				err = util.SaveToFile(path.Join(STORE_ROOT, p.Id, strings.Replace(p.Name, "/", "_", -1)+"."+p.Ext), entity)
 				if err != nil {
 					log.Println("旷工"+w.Id+"来报，储存出错了，", err)
 					errPleasure = append(errPleasure, p)
 				}
-				w.Dispatcher.SetDone(p.Uri)
+				w.Dispatcher.SetDone(p.Num, p.Id)
 			}
 			if len(errPleasure) > 0 {
 				go func() { w.PleasureChan <- errPleasure }()
@@ -123,29 +108,41 @@ func (w *Worker) Work() {
 	}
 }
 
-func (w *Worker) Pick(oriUri string, Id string, num string, text []byte) (seeders []Seeder, pleasures []Pleasure) {
-	seederReg := regexp.MustCompile(`https://www\.mzitu\.com/(\d{1,6})(/(\d{1,3}))?`)
-	pleasureReg := regexp.MustCompile(`https://i\d{0,2}\.meizitu\.net/(\d.*?)\.(jpg|jpeg|png|bmp|gif)`)
-
-	seederUris := seederReg.FindAllSubmatch(text, -1)
-	pleasureUris := pleasureReg.FindAllSubmatch(text, -1)
-
-	for _, seederUri := range seederUris {
-		if !w.Dispatcher.GetDone(string(seederUri[0])) {
-			//log.Println("拣到seeder", string(seederUri[0]))
-			seeders = append(seeders, Seeder{
-				Resource{Uri: string(seederUri[0])}})
+func (w *Worker) Pick(oriUri string, Id string, num int, text []byte) (seeders []Seeder, pleasures []Pleasure) {
+	if num == 1 && oriUri != LIST_URI {
+		if !w.Dispatcher.Exist(oriUri) {
+			totalNumReg := regexp.MustCompile(`'dots'>…</span><a href='https://www\.mzitu\.com/` + Id + `/(\d{1,3})'`)
+			tmp := totalNumReg.FindSubmatch(text)
+			if len(tmp) == 0 {
+				log.Fatalln(Id, oriUri+"没有找到最后一页")
+			}
+			totalNum, err := strconv.Atoi(string(tmp[1]))
+			if err != nil {
+				log.Fatalln(err)
+			}
+			w.Dispatcher.Add(Id, oriUri, totalNum, 0)
 		}
 	}
-	for _, pleasureUri := range pleasureUris {
-		if !w.Dispatcher.GetDone(string(pleasureUri[0])) {
-			//log.Println("拣到pleasure", string(pleasureUri[0]))
-			pleasures = append(pleasures, Pleasure{
-				Id:       Id,
-				Name:     num + "_" + string(pleasureUri[1]),
-				Ext:      string(pleasureUri[2]),
-				Resource: Resource{Uri: string(pleasureUri[0]), Refer: oriUri}})
+	if oriUri == LIST_URI {
+		seederReg := regexp.MustCompile(`https://www\.mzitu\.com/(\d{1,6})(/(\d{1,3}))?`)
+		seederUris := seederReg.FindAllSubmatch(text, -1)
+		for _, seederUri := range seederUris {
+			if !w.Dispatcher.Exist(string(seederUri[1])) {
+				log.Println("拣到seeder", string(seederUri[1]))
+				seeders = append(seeders, Seeder{
+					Resource{Uri: string(seederUri[0]), Id: string(seederUri[1]), Num: 1}})
+
+			}
 		}
+	}
+	pleasureReg := regexp.MustCompile(`https://i\d{0,2}\.(?:meizitu\.net|mmzztt\.com)/(\d.*?)\.(jpg|jpeg|png|bmp|gif)`)
+	pleasureUris := pleasureReg.FindAllSubmatch(text, -1)
+	for _, pleasureUri := range pleasureUris {
+		log.Println("拣到pleasure", string(pleasureUri[0]))
+		pleasures = append(pleasures, Pleasure{
+			Name:     strconv.Itoa(num) + "_" + string(pleasureUri[1]),
+			Ext:      string(pleasureUri[2]),
+			Resource: Resource{Uri: string(pleasureUri[0]), Refer: oriUri, Id: Id, Num: num}})
 	}
 
 	return
@@ -185,7 +182,7 @@ func (w *Worker) Dig(res Resource) ([]byte, error) {
 		}
 	}
 
-	time.Sleep(time.Microsecond * time.Duration(1000+rand.Intn(800)))
+	//time.Sleep(time.Microsecond * time.Duration(1000+rand.Intn(800)))
 
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusTooManyRequests {
@@ -219,7 +216,7 @@ func (w *Worker) PreSave(Id string, textByte []byte) {
 	for _, t := range tagsRaw {
 		tags = append(tags, t[1])
 	}
-	err := util.SaveToFile(path.Join("data", Id, "info.txt"),
+	err := util.SaveToFile(path.Join(STORE_ROOT, Id, "info.txt"),
 		[]byte(fmt.Sprintf("title:%s\ntags:%s\ncategory:%s\ndate:%s\n", title, strings.Join(tags, ","), category, date)))
 	if err != nil {
 		log.Fatalln("旷工"+w.Id+"来报, 建立仓库失败", err)
