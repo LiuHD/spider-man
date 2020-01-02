@@ -5,6 +5,8 @@ import (
 	"log"
 	"martin/spider_man/factory"
 	"martin/spider_man/global"
+	"os"
+	"strconv"
 )
 
 func main() {
@@ -12,6 +14,15 @@ func main() {
 	context := global.Context{Db: db}
 	//开始
 	log.Println("开始")
-	manager := factory.Dispatcher{WorkerNum: 1, Ctx: context}
+	s := os.Args
+	var workerNum = 1
+	var err error
+	if len(s) > 1 {
+		workerNum, err = strconv.Atoi(s[1])
+		if err != nil {
+			log.Fatalln(err)
+		}
+	}
+	manager := factory.Dispatcher{WorkerNum: workerNum, Ctx: context}
 	manager.Start()
 }
