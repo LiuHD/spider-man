@@ -2,43 +2,65 @@ package factory
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
-	"path"
-	"strconv"
 	"time"
 )
 
-func Init() *sql.DB {
-	db, err := sql.Open("sqlite3", "./foo.db")
+var db *sql.DB
+
+var galleryTableName, pleasureTableName, tagTableName string
+
+func InitKeeper(siteName string) {
+	galleryTableName = siteName + "_gallery"
+	pleasureTableName = siteName + "_pleasure"
+	tagTableName = siteName + "_tag"
+
+	var err error
+	db, err = sql.Open("sqlite3", "./foo.db")
 	if err != nil {
 		log.Fatalln("传送带启动失败：", err)
 	}
-	sql_table := `CREATE TABLE IF NOT EXISTS "gallery" (
-"gallery_id" varchar NOT NULL,
+
+	gallery_sql := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS "%s" (
+"id" varchar NOT NULL,
 "url" varchar NOT NULL,
 "total_num" integer NOT NULL DEFAULT 0,
 "done_num" integer NOT NULL DEFAULT 0,
+"title" varchar Null,
+"category" varcha NULL,
+"posted" varchar null,
 "created" TIMESTAMP,
-"updated" TIMESTAMP default (datetime('now', 'localtime')))`
-	table2_sql := `CREATE TABLE IF NOT EXISTS "pleasure" (
+"updated" TIMESTAMP default (datetime('now', 'localtime')))`, galleryTableName)
+	pleasure_sql := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS "%s" (
+"url" varchar not null,
+"referrer_url" varchar not null,
 "gallery_id" varchar not null,
 "num" integer not null default 0,
 "done" integer not null default 0,
+"created" timestamp,
+"updated" timestamp default (datetime('now', 'localtime')))`, pleasureTableName)
+	tag_sql := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS "%s" (
+"gallery_id" varchar not null,
+"tag" varchar NOT NULL,
 "created" timestamp ,
-"updated" timestamp default (datetime('now', 'localtime')))`
-	_, err = db.Exec(sql_table)
+"updated" timestamp default (datetime('now', 'localtime')))`, tagTableName)
+	_, err = db.Exec(gallery_sql)
 	if err != nil {
-		log.Fatalln("传送带初始化失败：", err)
+		log.Fatalln("宝罐初始化失败：", err)
 	}
-	_, err = db.Exec(table2_sql)
+	_, err = db.Exec(pleasure_sql)
 	if err != nil {
-		log.Fatalln("传送带初始化失败：", err)
+		log.Fatalln("宝贝初始化失败：", err)
 	}
-	return db
+	_, err = db.Exec(tag_sql)
+	if err != nil {
+		log.Fatalln("标签初始化失败：", err)
+	}
 }
 
 func (d *Dispatcher) Exist(Id string) bool {
-	stmt, err := d.Ctx.Db.Prepare("SELECT * FROM gallery where gallery_id = ? limit 1")
+	stmt, err := db.Prepare(fmt.Sprintf("SELECT * FROM %s where id = ? limit 1", galleryTableName))
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -53,85 +75,100 @@ func (d *Dispatcher) Exist(Id string) bool {
 	return rows.Next()
 }
 
-func (d *Dispatcher) Add(Id string, uri string, totalNum int, doneNum int) {
-	stmt, err := d.Ctx.Db.Prepare("INSERT INTO gallery(gallery_id, url, total_num, done_num, created) VALUES(?, ?, ?, ?, ?)")
+func (d *Dispatcher) PleasureExist(Id string, num int) bool {
+	stmt, err := db.Prepare(fmt.Sprintf("SELECT * FROM %s where gallery_id = ? and num = ? limit 1", pleasureTableName))
 	if err != nil {
 		log.Fatalln(err)
 	}
 	defer stmt.Close()
-	_, err = stmt.Exec(Id, uri, totalNum, doneNum, time.Now().Unix())
-	if err != nil {
-		log.Fatalln("写入报错", err)
-	}
-	stmt1, err := d.Ctx.Db.Prepare("INSERT INTO pleasure(gallery_id, num, created) values(?, ?, ?)")
-	defer stmt1.Close()
-	num := 0
-	for num < totalNum {
-		num++
-		stmt1.Exec(Id, num, time.Now().Unix())
-	}
-}
 
-func (d *Dispatcher) Ensure() {
-	res, err := d.Ctx.Db.Query("SELECT gallery_id, total_num FROM gallery limit")
+	rows, err := stmt.Query(Id, num)
+	defer rows.Close()
+
 	if err != nil {
 		log.Fatalln(err)
 	}
-	var totalNum int
-	var GalleryId string
-	for res.Next() {
-		res.Scan(&GalleryId, &totalNum)
-		//log.Fatalln(GalleryId, totalNum)
-		i := 1
-		for i <= totalNum {
-			stmt, err := d.Ctx.Db.Prepare("SELECT * FROM pleasure where gallery_id = ? and num = ? limit 1")
-			if err != nil {
-				log.Fatalln(err)
-			}
-			defer stmt.Close()
+	return rows.Next()
+}
 
-			rows, err := stmt.Query(GalleryId, i)
-			defer rows.Close()
-
-			if err != nil {
-				log.Fatalln(err)
-			}
-			//log.Println(GalleryId, i, rows.Next())
-			if !rows.Next() {
-				log.Println("补", GalleryId, i)
-				stmt1, _ := d.Ctx.Db.Prepare("INSERT INTO pleasure(gallery_id, num, created) values(?, ?, ?)")
-				defer stmt1.Close()
-				stmt1.Exec(GalleryId, i, time.Now().Unix())
-			}
-			i++
+func (d *Dispatcher) Add(Id string, uri string, totalNum int, doneNum int, title, category, posted string, tags []string) {
+	stmt, err := db.Prepare(fmt.Sprintf("INSERT INTO %s(id, url, total_num, done_num, title, category, posted, created) VALUES(?, ?, ?, ?, ?, ?, ?, ?)", galleryTableName))
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(Id, uri, totalNum, doneNum, title, category, posted, time.Now().Unix())
+	if err != nil {
+		log.Fatalln("写入gallery", err)
+	}
+	stmt1, err := db.Prepare(fmt.Sprintf("INSERT INTO %s(gallery_id, num, created, url, referrer_url) values(?, ?, ?, ?, ?)", pleasureTableName))
+	defer stmt1.Close()
+	pageUrlGenerator := d.Config.PageUrlGenerator
+	if pageUrlGenerator != nil {
+		num := 0
+		for num < totalNum {
+			num++
+			stmt1.Exec(Id, num, time.Now().Unix(), "", pageUrlGenerator(uri, Id, num))
 		}
+	}
+	if err != nil {
+		log.Fatalln("写入pleasure", err)
+	}
+	stmt2, err := db.Prepare(fmt.Sprintf("INSERT INTO %s(gallery_id, tag, created) values(?, ?, ?)", tagTableName))
+	defer stmt2.Close()
+	for _, tag := range tags {
+		stmt2.Exec(Id, tag, time.Now().Unix())
+	}
+	if err != nil {
+		log.Fatalln("写入tag", err)
+	}
+}
+
+func (d *Dispatcher) PleasureAdd(referUrl string, Id string, uri string, num int) {
+	stmt1, err := db.Prepare(fmt.Sprintf("INSERT INTO %s(gallery_id, num, created, url, referrer_url) values(?, ?, ?, ?, ?)", pleasureTableName))
+	defer stmt1.Close()
+	stmt1.Exec(Id, num, time.Now().Unix(), uri, referUrl)
+	if err != nil {
+		log.Fatalln("写入pleasure", err)
 	}
 }
 
 func (d *Dispatcher) SetDone(num int, Id string) {
-	stmt, err := d.Ctx.Db.Prepare("UPDATE pleasure set done = 1 where gallery_id = ? and num = ?")
+	stmt, err := db.Prepare(fmt.Sprintf("UPDATE %s set done = 1 where gallery_id = ? and num = ?", pleasureTableName))
 	if err != nil {
 		log.Fatalln(err)
 	}
 	defer stmt.Close()
 	_, err = stmt.Exec(Id, num)
 	if err != nil {
-		log.Fatalln("写入完成态报错1", err)
+		log.Fatalln("写入完成态1", err)
 	}
 
-	stmt1, err := d.Ctx.Db.Prepare("UPDATE gallery set done_num = (done_num + 1) where gallery_id = ?")
+	stmt1, err := db.Prepare(fmt.Sprintf("UPDATE %s set done_num = (select count(*) from %s where gallery_id = ? and done = 1) where id = ?", galleryTableName, pleasureTableName))
 	if err != nil {
 		log.Fatalln(err)
 	}
 	defer stmt1.Close()
-	_, err = stmt1.Exec(Id)
+	_, err = stmt1.Exec(Id, Id)
 	if err != nil {
-		log.Fatalln("写入完成态报错2", err)
+		log.Fatalln("写入完成态2", err)
+	}
+}
+
+func (d *Dispatcher) Set(Id string, num int, url string) {
+	stmt, err := db.Prepare(fmt.Sprintf("UPDATE %s set url = ? where gallery_id = ? and num = ?", pleasureTableName))
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(url, Id, num)
+	if err != nil {
+		log.Fatalln("完善pleasure地址失败", err)
 	}
 }
 
 func (d *Dispatcher) GetAllUndone() []Seeder {
-	stmt, err := d.Ctx.Db.Prepare("SELECT gallery_id, num FROM pleasure where done = 0")
+	stmt, err := db.Prepare(fmt.Sprintf("SELECT url, referrer_url, gallery_id, num FROM %s where done = 0", pleasureTableName))
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -144,21 +181,14 @@ func (d *Dispatcher) GetAllUndone() []Seeder {
 	}
 	var seeders []Seeder
 	for rows.Next() {
-		var GalleryId string
+		var GalleryId, Url, ReferrerUrl string
 		var Num int
-		err = rows.Scan(&GalleryId, &Num)
+		err = rows.Scan(&Url, &ReferrerUrl, &GalleryId, &Num)
 		if err != nil {
 			log.Fatalln(err)
 		}
-		seeders = append(seeders, Seeder{Resource{Id: GalleryId, Num: Num, Uri: d.genSeederUri(GalleryId, Num)}})
+		seeders = append(seeders, Seeder{Resource{Id: GalleryId, Num: Num, Uri: ReferrerUrl}})
 	}
 
 	return seeders
-}
-
-func (d *Dispatcher) genSeederUri(Id string, Num int) string {
-	if Num == 1 {
-		return "https://" + path.Join("www.mzitu.com", Id)
-	}
-	return "https://" + path.Join("www.mzitu.com", Id, strconv.Itoa(Num))
 }

@@ -8,11 +8,9 @@ import (
 	"time"
 )
 
-const LIST_URI = "https://www.mzitu.com/all"
-const HOME_URI = "https://www.mzitu.com"
-
 type Dispatcher struct {
 	Ctx       global.Context
+	Config    global.SiteConfig
 	WorkerNum int
 }
 
@@ -20,10 +18,11 @@ var cs chan Seeder
 var ps chan []Pleasure
 
 func (d *Dispatcher) Start() {
-	//d.Ensure()
-	//log.Fatalln("结束了")
-	cs = make(chan Seeder, 10)
-	ps = make(chan []Pleasure, 10)
+	//初始化仓库
+	InitKeeper(d.Ctx.SiteName)
+
+	cs = make(chan Seeder, 100)
+	ps = make(chan []Pleasure, 100)
 
 	i := 0
 	for i < d.WorkerNum {
@@ -36,11 +35,15 @@ func (d *Dispatcher) Start() {
 		i++
 	}
 	log.Println(strconv.Itoa(d.WorkerNum) + "个旷工已经开始工作")
+
+	//种子初始化
 	seeders := d.GetAllUndone()
-	for _, s := range seeders {
-		cs <- s
+	for _, su := range d.Config.ListUrl {
+		seeders = append(seeders, Seeder{Resource{Uri: su, Num: 0, Id: ""}})
 	}
-	cs <- Seeder{Resource{Uri: LIST_URI}}
+	for _, s := range seeders {
+		go func(seeder Seeder) { cs <- seeder }(s)
+	}
 	d.panel()
 
 	shutdownSign := time.Tick(1 * time.Second)
@@ -51,6 +54,13 @@ shutdown:
 		case <-shutdownSign:
 			if emptyTime > 30 {
 				break shutdown
+			} else if emptyTime > 10 {
+				//todo 如果有些地址一直返回空，会导致死循环，先加上重试次数的筛选，再开启
+				//log.Println("再加一些🐛")
+				//seeders := d.GetAllUndone()
+				//for _, s := range seeders {
+				//	go func(seeder Seeder) {cs <- seeder}(s)
+				//}
 			}
 			if len(cs) == 0 && len(ps) == 0 {
 				emptyTime++
@@ -59,17 +69,20 @@ shutdown:
 			}
 		}
 	}
+	close(cs)
+	close(ps)
 	log.Println("THE END")
 }
 
 func (d *Dispatcher) panel() {
 	var internalSign = time.Tick(2 * time.Second)
 	go func() {
-		select {
-		case <-internalSign:
-			//todo
-			fmt.Printf("seeder num: %d\npleasure num: %d\ndone uri num: %d\n\n", len(cs), len(ps), 0)
-
+		for {
+			select {
+			case <-internalSign:
+				fmt.Printf("%d 🐛 %d 🦋 \n\n", len(cs), len(ps))
+			}
 		}
+
 	}()
 }
