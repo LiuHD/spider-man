@@ -72,7 +72,7 @@ func (w *Worker) Run() {
 			for _, p := range ps {
 				entity, err := w.Dig(p.Resource)
 				if err != nil {
-					log.Println("旷工"+w.Id+"来报，搬运出错了，", err)
+					log.Fatalln("旷工"+w.Id+"来报，搬运出错了，", err)
 					errPleasure = append(errPleasure, p)
 					continue
 				}
@@ -200,7 +200,7 @@ func (w *Worker) Dig(res Resource) ([]byte, error) {
 	//time.Sleep(time.Microsecond * time.Duration(1000+rand.Intn(800)))
 
 	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusTooManyRequests {
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusNotFound {
 			log.Println("挖得太快了，有塌陷的危险，停一停")
 			time.Sleep(time.Second * time.Duration(rand.Intn(8)))
 			return []byte{}, nil

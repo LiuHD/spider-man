@@ -75,13 +75,10 @@ shutdown:
 }
 
 func (d *Dispatcher) panel() {
-	var internalSign = time.Tick(2 * time.Second)
+	var internalSign = time.Tick(time.Second * 2)
 	go func() {
-		for {
-			select {
-			case <-internalSign:
-				fmt.Printf("%d 🐛 %d 🦋 \n\n", len(cs), len(ps))
-			}
+		for range internalSign {
+			fmt.Printf("%d 🐛 %d 🦋 \n\n", len(cs), len(ps))
 		}
 
 	}()
